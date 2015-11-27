@@ -1,14 +1,20 @@
 #include <GL/glut.h>
 #include <stdio.h>
 
+#define POINT_NUM	4
+
 GLvoid drawScene(GLvoid);
 GLvoid Reshape(int w, int h);
-//void Timerfunction(int value);
+void Timerfunction(int value);
 void Mouse(int button, int state, int x, int y);
 void keyboard(unsigned char key, int x, int y);
+void Mouse_Move(int x, int y);
 //-----------------------------------------------
 void Init();
 void Cmera_change();
+bool Collide_XZ(float a_x, float a_z, float b_x, float b_z, float a_radious, float b_radious);
+
+enum { XY_SURFACE = 0, XZ_SURFACE = 1, PERSPECTIVE = 2 };
 
 struct Point
 {
@@ -18,10 +24,10 @@ struct Point
 	bool collison;
 };
 
-Point p[4];
+Point p[POINT_NUM];
+Point test_point = { 0, 0, 0 };
 
-
-int a = 0;
+int camera_viewpoint = 0;
 int w1 = 0, h1 = 0;
 int point_num = 0;
 
@@ -36,8 +42,9 @@ void main(int argc, char *argv[])
 	glutDisplayFunc(drawScene);
 	glutReshapeFunc(Reshape);
 	glutMouseFunc(Mouse);
+	glutMotionFunc(Mouse_Move);
 	glutKeyboardFunc(keyboard);
-	//glutTimerFunc(40, Timerfunction, 1);
+	glutTimerFunc(40, Timerfunction, 1);
 	glutMainLoop();
 }
 
@@ -60,10 +67,11 @@ GLvoid drawScene(GLvoid)
 	}
 	glEnd();
 
-	//glPointSize(5);
-	//glBegin(GL_POINTS);
-	//glColor3f(1, 0, 0);
-	//glVertex3f(p[0].x, p[0].y, p[0].z);
+	glPointSize(5);
+	glBegin(GL_POINTS);
+	glColor3f(1,0,0);
+	glVertex3f(test_point.x, test_point.y, test_point.z);
+	glEnd();
 	//glColor3f(0, 1, 0);
 	//glVertex3f(p[1].x, p[1].y, p[1].z);
 	//glColor3f(0, 0, 1);
@@ -101,11 +109,10 @@ GLvoid drawScene(GLvoid)
 	}
 	glPopMatrix();
 
-
-	printf("red = %.f, %.f, %.f \n", p[0].x, p[0].y, p[0].z);
-	printf("green = %.f, %.f, %.f \n", p[1].x, p[1].y, p[1].z);
-	printf("blue = %.f, %.f, %.f \n", p[2].x, p[2].y, p[2].z);
-	printf("yellow = %.f, %.f, %.f \n\n", p[3].x, p[3].y, p[3].z);
+	printf("p[0].collision = %d \n", p[0].collison);
+	printf("p[1].collision = %d \n", p[1].collison);
+	printf("p[2].collision = %d \n", p[2].collison);
+	printf("p[3].collision = %d \n\n", p[3].collison);
 
 	glutSwapBuffers();
 }
@@ -119,34 +126,68 @@ GLvoid Reshape(int w, int h)
 
 void Mouse(int button, int state, int x, int y)
 {
-	if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN)
+	if (camera_viewpoint == XY_SURFACE)
 	{
-		p[point_num].x = x - 400;
-		p[point_num].y = 300 - y;
-		point_num++;
-		glutPostRedisplay();
+		if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN)
+		{
+			p[point_num].x = x - 400;
+			p[point_num].y = 300 - y;
+			point_num++;
+		}
+	}
+	else if (camera_viewpoint == XZ_SURFACE)
+	{ 
+		if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN)
+		{
+			test_point.x = x - 400;
+			test_point.z = 300 - y;
+			for (int i = 0; i < POINT_NUM; i++){
+				if (Collide_XZ(p[i].x, p[i].z, test_point.x, test_point.z, 2.5, 2.5))
+				{
+					p[i].collison = true;
+				}
+			}
+		}
+		else if (button == GLUT_LEFT_BUTTON && state == GLUT_UP)
+		{
+			for (int i = 0; i < POINT_NUM; i++)
+				p[i].collison = false;
+		}
+	}
+}
+
+void Mouse_Move(int x, int y)
+{
+	for (int i = 0; i < POINT_NUM; i++)
+	{
+		if (p[i].collison)
+		{
+			p[i].z = 300 - y;
+		}
 	}
 }
 
 void keyboard(unsigned char key, int x, int y)
 {
-	if (key == '0')
-	{
-		a = 0;
-		glutPostRedisplay();
-	}
 	if (key == '1')
 	{
-		a = 1;
-		glutPostRedisplay();
+		camera_viewpoint = XY_SURFACE;
+	}
+	if (key == '2')
+	{
+		camera_viewpoint = XZ_SURFACE;
+	}
+	if (key == '3')
+	{
+		camera_viewpoint = PERSPECTIVE;
 	}
 }
 
-//void Timerfunction(int value)
-//{
-//	glutPostRedisplay();
-//	glutTimerFunc(40, Timerfunction, 1);
-//}
+void Timerfunction(int value)
+{
+	glutPostRedisplay();
+	glutTimerFunc(40, Timerfunction, 1);
+}
 
 void Init()
 {
@@ -158,12 +199,32 @@ void Init()
 void Cmera_change()
 {
 	glLoadIdentity();
-	if (a == 0)
-		glOrtho(-400, 400, -300, 300, 0, 500);
-	if (a == 1){
+	if (camera_viewpoint == XY_SURFACE)
+		glOrtho(-400, 400, -300, 300, -300, 300);
+	if (camera_viewpoint == XZ_SURFACE){
+		glRotatef(90, 1, 0, 0);
+		glOrtho(-400, 400, -300, 300, -300, 300);
+	}
+	if (camera_viewpoint == PERSPECTIVE){
 		gluPerspective(60.0f, w1 / h1, 1.0, 2000.0);
 		gluLookAt(0.0, 1000, 0.0,
 			0.0, 0.0, 0.0,
 			0.0, 0.0, -1.0);
 	}
+}
+
+bool Collide_XZ(float a_x, float a_z, float b_x, float b_z, float a_radious, float b_radious)
+{
+	float left_a = a_x - a_radious, right_a = a_x + a_radious, top_a = a_z + a_radious, bottom_a = a_z - a_radious;
+	float left_b = b_x - b_radious, right_b = b_x + b_radious, top_b = b_z + b_radious, bottom_b = b_z - b_radious;
+
+	if (left_a > right_b)
+		return false;
+	if (right_a < left_b)
+		return false;
+	if (bottom_a > top_b)
+		return false;
+	if (top_a < bottom_b)
+		return false;
+	return true;
 }
