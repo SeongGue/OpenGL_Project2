@@ -1,12 +1,16 @@
+#pragma warning(disable : 4996)
 #include <GL/glut.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <windows.h>
+
 
 #define POINT_NUM	4
 #define SPLINE_NUM	5
 #define BUILDING_NUM	10
 #define GROUND	-200
+#define SNOW_NUM	20
 
 GLvoid drawScene(GLvoid);
 GLvoid Reshape(int w, int h);
@@ -14,6 +18,8 @@ void Timerfunction(int value);
 void Mouse(int button, int state, int x, int y);
 void keyboard(unsigned char key, int x, int y);
 void Mouse_Move(int x, int y);
+void Light();
+GLubyte * LoadDIBitmap(const char *filename, BITMAPINFO **info);
 //-----------------------------------------------
 void Print();
 
@@ -25,9 +31,14 @@ void Hermite_Spline();
 void draw_train();
 void gen_building();
 int gen_sign();
+void draw_building();
+void Setting();
+void make_background();
+void Init_snow();
 
 
 enum { XY_SURFACE = 0, XZ_SURFACE = 1, PERSPECTIVE = 2 };
+enum { SUNNY = 0, SNOW = 1, RAIN = 2 };
 
 struct Point
 {
@@ -44,11 +55,15 @@ struct Building
 	float color_r, color_g, color_b;
 };
 
+GLubyte *pBytes; // 데이터를 가리킬 포인터
+BITMAPINFO *info; // 비트맵 헤더 저장핛 변수
+
 Point p[SPLINE_NUM][POINT_NUM];
 Point test_point = { 0, 0, 0 };
 Point save_spline_point[SPLINE_NUM][100];
 Point v0[SPLINE_NUM];
 Point v3[SPLINE_NUM];
+Point t[SNOW_NUM];
 
 Building building[BUILDING_NUM];
 
@@ -58,12 +73,17 @@ int point_num = 0;
 
 int c_index = 0, s_index = 0; //롤러코스터 이동 변수
 int spline_num = 0;
+int aa = -1;
+int weather = RAIN;
 
 float angle = 0;
+
+GLuint textures[5]; // 텍스처 이름
 
 void main(int argc, char *argv[])
 {
 	Init();
+	Init_snow();
 	gen_building();
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
 	glutInitWindowPosition(100, 100);
@@ -83,19 +103,44 @@ GLvoid drawScene(GLvoid)
 	Cmera_change();
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // 설정된 색으로 젂체를 칠하기
+	Light();
 
 	Hermite_Spline();
 	ctrl_point();
 	draw_train();
-
-	for (int i = 0; i < BUILDING_NUM; i++)
+	if (camera_viewpoint != XZ_SURFACE)
 	{
-		glColor3f(building[i].color_r, building[i].color_g, building[i].color_b);
-		glPushMatrix();
-		glTranslatef(building[i].x, building[i].y, building[i].z);
-		glutSolidCube(building[i].size);
-		glPopMatrix();
+		draw_building();
+
+		if (weather == SNOW)
+		{
+			for (int i = 0; i < SNOW_NUM; i++){
+				glPushMatrix();
+				{
+					glColor3f(1, 1, 1);
+					glTranslatef(t[i].x, t[i].y, t[i].z);
+					glutSolidCube(10);
+				}
+				glPopMatrix();
+			}
+		}
+		else if (weather == RAIN)
+		{
+			for (int i = 0; i < SNOW_NUM; i++){
+				glPushMatrix();
+				{
+					glColor3f(1, 1, 1);
+					glTranslatef(t[i].x, t[i].y, t[i].z);
+					glScalef(1, 3, 1);
+					glutSolidCube(10);
+				}
+				glPopMatrix();
+			}
+		}
+		else
+			weather = SUNNY;
 	}
+	make_background();
 
 	glutSwapBuffers();
 }
@@ -106,6 +151,9 @@ GLvoid Reshape(int w, int h)
 	w1 = w;
 	h1 = h;
 	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glEnable(GL_MAP2_VERTEX_3);
+	Setting();
 }
 
 void Mouse(int button, int state, int x, int y)
@@ -194,6 +242,18 @@ void keyboard(unsigned char key, int x, int y)
 	{
 		camera_viewpoint = PERSPECTIVE;
 	}
+	if (key == 'q')
+	{
+		weather = SUNNY;
+	}
+	if (key == 'w')
+	{
+		weather = RAIN;
+	}
+	if (key == 'e')
+	{
+		weather = SNOW;
+	}
 }
 
 void Timerfunction(int value)
@@ -202,6 +262,12 @@ void Timerfunction(int value)
 	if (camera_viewpoint == PERSPECTIVE){
 		s_index++;
 		c_index = (int)(s_index / 100);
+	}
+	for (int i = 0; i < SNOW_NUM; i++)
+	{
+		t[i].y -= 5;
+		if (t[i].y < -100)
+			t[i].y = 150;
 	}
 	glutPostRedisplay();
 	glutTimerFunc(40, Timerfunction, 1);
@@ -277,7 +343,7 @@ void ctrl_point()
 }
 void Hermite_Spline()
 {
-	glColor3f(1, 1, 1);
+	glColor3f(0, 0, 0);
 	for (int i = 0; i < SPLINE_NUM; i++)
 	{
 		v0[i] = { 3 * (p[i][1].x - p[i][0].x), 3 * (p[i][1].y - p[i][0].y), 3 * (p[i][1].z - p[i][0].z) };
@@ -336,8 +402,8 @@ void gen_building()
 		sign = gen_sign();
 		building[i].size = (rand() % 50) + 50;
 
-		building[i].x = sign * (rand() % 400);
-		building[i].z = sign * (rand() % 300);
+		building[i].x = sign * (rand() % 350);
+		building[i].z = sign * (rand() % 250);
 
 		if (i > 0)
 		{
@@ -345,8 +411,8 @@ void gen_building()
 			{
 				if (Collide_2D(building[j].x, building[j].z, building[i].x, building[i].z, building[j].size / 2, building[i].size / 2))
 				{
-					building[i].x = sign * (rand() % 400);
-					building[i].z = sign * (rand() % 300);
+					building[i].x = sign * (rand() % 350);
+					building[i].z = sign * (rand() % 250);
 					j = 0;
 				}
 				printf("i = %d, j = %d \n", i, j);
@@ -375,4 +441,284 @@ int gen_sign()
 		return sign = 1;
 	else
 		return sign = -1;
+}
+
+void draw_building()
+{
+	for (int i = 0; i < BUILDING_NUM; i++)
+	{
+		glColor3f(building[i].color_r, building[i].color_g, building[i].color_b);
+		glPushMatrix();
+		glTranslatef(building[i].x, building[i].y, building[i].z);
+		glutSolidCube(building[i].size);
+		glPopMatrix();
+	}
+}
+
+GLubyte * LoadDIBitmap(const char *filename, BITMAPINFO **info)
+{
+	FILE *fp;
+	GLubyte *bits;
+	int bitsize, infosize;
+	BITMAPFILEHEADER header;
+
+	//바이너리 읽기 모드로 파일을 연다.
+	if ((fp = fopen(filename, "rb")) == NULL)
+		return NULL;
+
+	//비트맵 파일 헤드를 읽는다.
+	if (fread(&header, sizeof(BITMAPFILEHEADER), 1, fp) < 1){
+		fclose(fp);
+		return NULL;
+	}
+
+	//파일이 BMP파일인지 확인한다.
+	if (header.bfType != 'MB'){
+		fclose(fp);
+		return NULL;
+	}
+
+	//BITMAPINFOHEADER 위치로 간다.
+	infosize = header.bfOffBits - sizeof(BITMAPFILEHEADER);
+
+	//비트맵 이미지 데이터를 넣을 메모리 할당을 한다.
+	if ((*info = (BITMAPINFO *)malloc(infosize)) == NULL){
+		fclose(fp);
+		exit(0);
+		return NULL;
+	}
+
+	//비트맵 인포 헤더를 읽는다.
+	if (fread(*info, 1, infosize, fp) < (unsigned)infosize){
+		free(*info);
+		fclose(fp);
+		return NULL;
+	}
+
+	//비트맵 크기 설정
+	if ((bitsize = (*info)->bmiHeader.biSizeImage) == 0)
+		bitsize = ((*info)->bmiHeader.biWidth) *
+		((*info)->bmiHeader.biBitCount + 7) / 8.0 *
+		abs((*info)->bmiHeader.biHeight);
+
+	// 비트맵의 크기만큼 메모리를 핛당핚다.
+	if ((bits = (unsigned char *)malloc(bitsize)) == NULL) {
+		free(*info);
+		fclose(fp);
+		return NULL;
+	}
+
+	// 비트맵 데이터를 bit(GLubyte 타입)에 저장핚다.
+	if (fread(bits, 1, bitsize, fp) < (unsigned int)bitsize) {
+		free(*info); free(bits);
+		fclose(fp);
+		return NULL;
+	}
+	fclose(fp);
+	return bits;
+}
+
+void Setting()
+{
+	glGenTextures(7, textures);
+
+	glBindTexture(GL_TEXTURE_2D, textures[0]);
+	{
+		pBytes = LoadDIBitmap("33floor.bmp", &info);
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, 512, 512, 0, GL_BGR_EXT, GL_UNSIGNED_BYTE, pBytes);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	glBindTexture(GL_TEXTURE_2D, textures[1]);
+	{
+		pBytes = LoadDIBitmap("34front.bmp", &info);
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, 512, 512, 0, GL_BGR_EXT, GL_UNSIGNED_BYTE, pBytes);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	glBindTexture(GL_TEXTURE_2D, textures[2]);
+	{
+		pBytes = LoadDIBitmap("34left.bmp", &info);
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, 512, 512, 0, GL_BGR_EXT, GL_UNSIGNED_BYTE, pBytes);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	glBindTexture(GL_TEXTURE_2D, textures[3]);
+	{
+		pBytes = LoadDIBitmap("34right.bmp", &info);
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, 512, 512, 0, GL_BGR_EXT, GL_UNSIGNED_BYTE, pBytes);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	glBindTexture(GL_TEXTURE_2D, textures[4]);
+	{
+		pBytes = LoadDIBitmap("34back.bmp", &info);
+		glTexImage2D(GL_TEXTURE_2D, 0, 3, 512, 512, 0, GL_BGR_EXT, GL_UNSIGNED_BYTE, pBytes);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	}
+	// 텍스처 모드 설정
+	glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_COLOR, GL_MODULATE);
+	// 텍스처 매핑 홗성화
+	glEnable(GL_TEXTURE_2D);
+}
+
+
+void Light()
+{
+	GLfloat AmbientLight0[] = { 0.1, 0.1, 0.1, 1.0f };
+	GLfloat DiffuseLight0[] = { 0.5, 0.5, 0.5, 1.0 };
+	GLfloat SpecularLight0[] = { 1.0, 1.0, 1.0, 1.0 };
+	GLfloat lightPos0[] = { -400, 300, 0.0, 1.0 };
+
+	GLfloat AmbientLight1[] = { 0.1, 0.1, 0.1, 1.0f };
+	GLfloat DiffuseLight1[] = { 0.5, 0.5, 0.5, 1.0 };
+	GLfloat SpecularLight1[] = { 1.0, 1.0, 1.0, 1.0 };
+	GLfloat lightPos1[] = { 400, 300, 0.0, 1.0 };
+
+	GLfloat specref[] = { 0.0f, 1.0f, 1.0f, 1.0f };
+	glEnable(GL_LIGHTING);
+
+	glEnable(GL_LIGHT1);
+
+	glLightModelfv(GL_LIGHT_MODEL_AMBIENT, AmbientLight1);
+	glLightfv(GL_LIGHT1, GL_AMBIENT, AmbientLight1);
+	glLightfv(GL_LIGHT1, GL_DIFFUSE, DiffuseLight1);
+	glLightfv(GL_LIGHT1, GL_SPECULAR, SpecularLight1);
+	glLightfv(GL_LIGHT1, GL_POSITION, lightPos1);
+
+	glPushMatrix();//조명 0
+	{
+		glColor3f(1, 0, 0);
+		glTranslatef(-400, 300, 0);
+		glutSolidSphere(20, 20, 20);
+	}
+	glPopMatrix();
+
+	glPushMatrix();//조명 1
+	{
+		glColor3f(1, 1, 0);
+		glTranslatef(400, 300, 0);
+		glutSolidSphere(20, 20, 20);
+	}
+	glPopMatrix();
+
+	glEnable(GL_LIGHT0);
+
+	glLightModelfv(GL_LIGHT_MODEL_AMBIENT, AmbientLight0);
+	glLightfv(GL_LIGHT0, GL_AMBIENT, AmbientLight0);
+	glLightfv(GL_LIGHT0, GL_DIFFUSE, DiffuseLight0);
+	glLightfv(GL_LIGHT0, GL_SPECULAR, SpecularLight0);
+	glLightfv(GL_LIGHT0, GL_POSITION, lightPos0);
+
+	glEnable(GL_COLOR_MATERIAL);
+	glColorMaterial(GL_FRONT, GL_AMBIENT_AND_DIFFUSE);
+	glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, specref);
+	glMateriali(GL_FRONT_AND_BACK, GL_SHININESS, 128);
+}
+
+void make_background()
+{
+	glPushMatrix();//glOrtho(-400, 400, -300, 300, -300, 300);
+	{
+		glBindTexture(GL_TEXTURE_2D, textures[0]); //front, left, right, back
+		glColor3f(1, 1, 1);
+		glBegin(GL_QUADS);//바닥
+		{
+			glTexCoord3f(0, 1, 0);
+			glVertex3f(-400, GROUND, -300);
+			glTexCoord3f(0, 0, 0);
+			glVertex3f(-400, GROUND, 300);
+			glTexCoord3f(1, 0, 0);
+			glVertex3f(400, GROUND, 300);
+			glTexCoord3f(1, 1, 0);
+			glVertex3f(400, GROUND, -300);
+		}
+		glEnd();
+		glBindTexture(GL_TEXTURE_2D, textures[1]);//앞벽
+		glColor3f(1, 1, 1);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord3f(1, 1, 0);
+			glVertex3f(-400, 300, 300);
+			glTexCoord3f(0, 1, 0);
+			glVertex3f(400, 300, 300);
+			glTexCoord3f(0, 0, 0);
+			glVertex3f(400, GROUND, 300);
+			glTexCoord3f(1, 0, 0);
+			glVertex3f(-400, GROUND, 300);
+		}
+		glEnd();
+		glBindTexture(GL_TEXTURE_2D, textures[2]);//왼쪽
+		glColor3f(1, 1, 1);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord3f(1, 1, 0);
+			glVertex3f(400, 300, 300);
+			glTexCoord3f(0, 1, 0);
+			glVertex3f(400, 300, -300);
+			glTexCoord3f(0, 0, 0);
+			glVertex3f(400, GROUND, -300);
+			glTexCoord3f(1, 0, 0);
+			glVertex3f(400, GROUND, 300);
+		}
+		glEnd();
+		glBindTexture(GL_TEXTURE_2D, textures[3]);//오른쪽
+		glColor3f(1, 1, 1);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord3f(0, 1, 0);
+			glVertex3f(-400, 300, 300);
+			glTexCoord3f(0, 0, 0);
+			glVertex3f(-400, GROUND, 300);
+			glTexCoord3f(1, 0, 0);
+			glVertex3f(-400, GROUND, -300);
+			glTexCoord3f(1, 1, 0);
+			glVertex3f(-400, 300, -300);
+		}
+		glEnd();
+		glBindTexture(GL_TEXTURE_2D, textures[4]);//뒤
+		glColor3f(1, 1, 1);
+		glBegin(GL_QUADS);
+		{
+			glTexCoord3f(0, 1, 0);
+			glVertex3f(-400, 300, -300);
+			glTexCoord3f(0, 0, 0);
+			glVertex3f(-400, GROUND, -300);
+			glTexCoord3f(1, 0, 0);
+			glVertex3f(400, GROUND, -300);
+			glTexCoord3f(1, 1, 0);
+			glVertex3f(400, 300, -300);
+		}
+		glEnd();
+	}
+	glPopMatrix();
+}
+
+void Init_snow()
+{
+	srand(1000);
+	for (int i = 0; i < SNOW_NUM; i++)
+	{
+		if (rand() % 2 == 0)
+			aa *= -1;
+		t[i].x = (rand() % 300) * aa;
+		t[i].y = (rand() % 150) * aa;
+		t[i].z = (rand() % 300) * aa;
+	}
 }
