@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <windows.h>
+#include <math.h>
 
 
 #define POINT_NUM	4
@@ -11,6 +12,7 @@
 #define BUILDING_NUM	10
 #define GROUND	-200
 #define SNOW_NUM	20
+#define PIE	3.14
 
 GLvoid drawScene(GLvoid);
 GLvoid Reshape(int w, int h);
@@ -35,9 +37,12 @@ void draw_building();
 void Setting();
 void make_background();
 void Init_snow();
+void select_weather();
+void Bresenham(float s_x, float s_y, float e_x, float e_y);
+void draw_all();
+void firewalk_line(float s_x, float s_y, float e_x, float e_y, float z);
 
-
-enum { XY_SURFACE = 0, XZ_SURFACE = 1, PERSPECTIVE = 2 };
+enum { XY_SURFACE = 0, XZ_SURFACE = 1, PERSPECTIVE = 2, MULTI_VIEW = 3 };
 enum { SUNNY = 0, SNOW = 1, RAIN = 2 };
 
 struct Point
@@ -74,9 +79,14 @@ int point_num = 0;
 int c_index = 0, s_index = 0; //롤러코스터 이동 변수
 int spline_num = 0;
 int aa = -1;
-int weather = RAIN;
+int weather = SUNNY;
+int fire_level = 0;
+
 
 float angle = 0;
+float b_time = 0;
+float c_time = 0;
+
 
 GLuint textures[5]; // 텍스처 이름
 
@@ -96,58 +106,19 @@ void main(int argc, char *argv[])
 	glutTimerFunc(40, Timerfunction, 1);
 	glutMainLoop();
 }
-
+//===============OpenGL Fuc=====================//
 
 GLvoid drawScene(GLvoid)
 {
-	Cmera_change();
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // 설정된 색으로 젂체를 칠하기
 	Light();
-
-	Hermite_Spline();
-	ctrl_point();
-	draw_train();
-	if (camera_viewpoint != XZ_SURFACE)
-	{
-		draw_building();
-
-		if (weather == SNOW)
-		{
-			for (int i = 0; i < SNOW_NUM; i++){
-				glPushMatrix();
-				{
-					glColor3f(1, 1, 1);
-					glTranslatef(t[i].x, t[i].y, t[i].z);
-					glutSolidCube(10);
-				}
-				glPopMatrix();
-			}
-		}
-		else if (weather == RAIN)
-		{
-			for (int i = 0; i < SNOW_NUM; i++){
-				glPushMatrix();
-				{
-					glColor3f(1, 1, 1);
-					glTranslatef(t[i].x, t[i].y, t[i].z);
-					glScalef(1, 3, 1);
-					glutSolidCube(10);
-				}
-				glPopMatrix();
-			}
-		}
-		else
-			weather = SUNNY;
-	}
-	make_background();
-
+	Cmera_change();
 	glutSwapBuffers();
 }
 
 GLvoid Reshape(int w, int h)
 {
-	glViewport(0, 0, w, h);
 	w1 = w;
 	h1 = h;
 	glEnable(GL_DEPTH_TEST);
@@ -242,6 +213,10 @@ void keyboard(unsigned char key, int x, int y)
 	{
 		camera_viewpoint = PERSPECTIVE;
 	}
+	if (key == '4')
+	{
+		camera_viewpoint = MULTI_VIEW;
+	}
 	if (key == 'q')
 	{
 		weather = SUNNY;
@@ -259,7 +234,20 @@ void keyboard(unsigned char key, int x, int y)
 void Timerfunction(int value)
 {
 	angle += 1;
-	if (camera_viewpoint == PERSPECTIVE){
+	if (fire_level == 0)
+		b_time += 1;
+	if (b_time == 100){
+		fire_level = 1;	
+	}
+	if (fire_level == 1)
+		c_time++;
+	if (c_time == 70){
+		b_time = 0;
+		c_time = 0;
+		fire_level = 0;
+	}
+
+	if (camera_viewpoint == PERSPECTIVE && point_num >= 19){
 		s_index++;
 		c_index = (int)(s_index / 100);
 	}
@@ -273,7 +261,7 @@ void Timerfunction(int value)
 	glutTimerFunc(40, Timerfunction, 1);
 }
 
-
+//========================MyFuc=====================================//
 void Init()
 {
 	for (int i = 0; i < SPLINE_NUM; i++){
@@ -288,18 +276,46 @@ void Init()
 void Cmera_change()
 {
 	glLoadIdentity();
-	if (camera_viewpoint == XY_SURFACE)
+	if (camera_viewpoint == XY_SURFACE){
+		glViewport(0, 0, w1, h1);
 		glOrtho(-400, 400, -300, 300, -300, 300);
+		draw_all();
+	}
 	if (camera_viewpoint == XZ_SURFACE){
+		glViewport(0, 0, w1, h1);
 		glRotatef(90, 1, 0, 0);
 		glOrtho(-400, 400, -300, 300, -300, 300);
+		draw_all();
 	}
 	if (camera_viewpoint == PERSPECTIVE){
+		glViewport(0, 0, w1, h1);
 		gluPerspective(60.0f, w1 / h1, 1.0, 2000.0);
 		gluLookAt(0.0, 100, 1000.0,
 			0.0, 0.0, 0.0,
 			0.0, 1.0, 0.0);
 		glRotatef(angle, 0, 1, 0);
+		draw_all();
+	}
+	if (camera_viewpoint == MULTI_VIEW){
+		glLoadIdentity();
+		glViewport(0, 300, w1 / 2, h1 / 2); //좌상단
+		glOrtho(-400, 400, -300, 300, -300, 300);
+		draw_all();
+
+		glLoadIdentity();
+		glViewport(w1 / 2, 300, w1 /2 , h1 / 2); //우상단
+		glRotatef(90, 1, 0, 0);
+		glOrtho(-400, 400, -300, 300, -300, 300);
+		draw_all();
+
+		glLoadIdentity();
+		glViewport(0, 0, w1/2, h1/2); //우하단
+		gluPerspective(60.0f, w1 / h1, 1.0, 2000.0);
+		gluLookAt(0.0, 100, 1000.0,
+			0.0, 0.0, 0.0,
+			0.0, 1.0, 0.0);
+		glRotatef(angle, 0, 1, 0);
+		draw_all();
 	}
 }
 
@@ -393,7 +409,7 @@ void draw_train()
 
 void gen_building()
 {
-	srand((unsigned)time(NULL));
+	srand((unsigned)(NULL));
 	int sign = 0;
 	int cnt = 0;
 	int jb = 0;
@@ -415,7 +431,6 @@ void gen_building()
 					building[i].z = sign * (rand() % 250);
 					j = 0;
 				}
-				printf("i = %d, j = %d \n", i, j);
 			}
 		}
 
@@ -581,15 +596,15 @@ void Setting()
 
 void Light()
 {
-	GLfloat AmbientLight0[] = { 0.1, 0.1, 0.1, 1.0f };
+	GLfloat AmbientLight0[] = { 0.5, 0.5, 0.5, 1.0f };
 	GLfloat DiffuseLight0[] = { 0.5, 0.5, 0.5, 1.0 };
 	GLfloat SpecularLight0[] = { 1.0, 1.0, 1.0, 1.0 };
 	GLfloat lightPos0[] = { -400, 300, 0.0, 1.0 };
 
-	GLfloat AmbientLight1[] = { 0.1, 0.1, 0.1, 1.0f };
+	GLfloat AmbientLight1[] = { 0.5, 0.5, 0.5, 1.0f };
 	GLfloat DiffuseLight1[] = { 0.5, 0.5, 0.5, 1.0 };
 	GLfloat SpecularLight1[] = { 1.0, 1.0, 1.0, 1.0 };
-	GLfloat lightPos1[] = { 400, 300, 0.0, 1.0 };
+	GLfloat lightPos1[] = { 0, 300, -300.0, 1.0 };
 
 	GLfloat specref[] = { 0.0f, 1.0f, 1.0f, 1.0f };
 	glEnable(GL_LIGHTING);
@@ -613,7 +628,7 @@ void Light()
 	glPushMatrix();//조명 1
 	{
 		glColor3f(1, 1, 0);
-		glTranslatef(400, 300, 0);
+		glTranslatef(0, 300, -300);
 		glutSolidSphere(20, 20, 20);
 	}
 	glPopMatrix();
@@ -721,4 +736,178 @@ void Init_snow()
 		t[i].y = (rand() % 150) * aa;
 		t[i].z = (rand() % 300) * aa;
 	}
+}
+
+//----------------------------------------------------------------------------
+void Bresenham(float s_x, float s_y, float e_x, float e_y)//http://bestend.co.kr/282
+{
+	if (e_x - s_x < 0){//x변화량이 음의 값
+		float tmp_x = s_x, tmp_y = s_y;
+		s_x = e_x;
+		e_x = tmp_x;
+		s_y = e_y;
+		e_y = tmp_y;
+	}
+
+	bool minus = false;
+	float dx = e_x - s_x, dy = e_y - s_y;
+	float end_x = 0, end_y = 0;
+	float x = 0, y = 0;
+	float m = dy / dx;
+	float p = 0;
+	int k = 0;
+	float c1 = 0, c2 = 0;
+
+
+
+	//============기울기가 다를때================//
+	//=======전처리==========//
+	if (0 <= m && m <= 1)//기본 브레즌함
+	{
+		x = s_x, y = s_y;
+		p = 2 * dy - dx;
+		end_x = e_x, end_y = e_y;
+		c1 = 2 * dy;
+		c2 = 2 * (dy - dx);
+	}
+	else if (m > 1)//y=x에 반사
+	{
+		x = s_y, y = s_x;
+		p = 2 * dx - dy;
+		end_x = e_y, end_y = e_x;
+		c1 = 2 * dx;
+		c2 = 2 * (dx - dy);
+	}
+	else if (-1 <= m && m <= 0)//y=0에 반사
+	{
+		x = s_x, y = -s_y;
+		p = 2 * -dy - dx;
+		end_x = e_x, end_y = -e_y;
+		c1 = 2 * -dy;
+		c2 = 2 * (-dy - dx);
+	}
+	else if (m < -1)//y=0에 반사 후 y=x반사
+	{
+		x = -s_y, y = s_x;
+		p = 2 * dx + dy;
+		end_x = -e_y, end_y = e_x;
+		c1 = 2 * dx;
+		c2 = 2 * (dx + dy);
+	}
+
+	glPointSize(2.5);
+	glColor3f(0, 0, 1);
+	
+
+	glBegin(GL_POINTS);
+	while (x <= end_x && y <= end_y)
+	{
+		++k;
+		//========기본 브레즈넘======//
+		if (p >= 0)
+		{
+			x += 1;
+			y += 1;
+			p += c2;
+		}
+		else if (p < 0)
+		{
+			x += 1;
+			p += c1;
+		}
+		//=======후처리=========//
+		if (minus == false)//x변화량이 음수
+		{
+			if (0 <= m && m <= 1)
+				glVertex2f(x, y);
+			else if (m > 1)
+				glVertex2f(y, x);
+			else if (-1 <= m && m <= 0)
+				glVertex2f(x, -y);
+			else if (m < -1)
+				glVertex2f(y, -x);
+		}
+		else
+		{
+			if (0 <= m && m <= 1)
+				glVertex2f(-x, y);
+			else if (m > 1)
+				glVertex2f(-y, x);
+			else if (-1 <= m && m <= 0)
+				glVertex2f(-x, -y);
+			else if (m < -1)
+				glVertex2f(-y, -x);
+		}
+	}
+	glEnd();
+}
+
+
+void select_weather()
+{
+	if (camera_viewpoint != XZ_SURFACE)
+	{
+		draw_building();
+
+		if (weather == SNOW)
+		{
+			for (int i = 0; i < SNOW_NUM; i++){
+				glPushMatrix();
+				{
+					glColor3f(1, 1, 1);
+					glTranslatef(t[i].x, t[i].y, t[i].z);
+					glutSolidCube(10);
+				}
+				glPopMatrix();
+			}
+		}
+		else if (weather == RAIN)
+		{
+			for (int i = 0; i < SNOW_NUM; i++){
+				glPushMatrix();
+				{
+					glColor3f(1, 1, 1);
+					glTranslatef(t[i].x, t[i].y, t[i].z);
+					glScalef(1, 3, 1);
+					glutSolidCube(10);
+				}
+				glPopMatrix();
+			}
+		}
+		else
+			weather = SUNNY;
+	}
+}
+void draw_all()
+{
+	Hermite_Spline();
+	ctrl_point();
+	draw_train();
+	select_weather();
+	make_background();
+	firewalk_line(0, GROUND, 100, 100, 0);
+}
+
+void firewalk_line(float s_x, float s_y, float e_x, float e_y, float z)
+{
+	float dx = e_x - s_x, dy = e_y - s_y;
+	float m = dy / dx;
+	float current_end_x = s_x + b_time;
+	float current_end_y = s_y + m * b_time;
+	glPushMatrix();
+	{
+		glTranslatef(0, 0, z);
+		//======연화========//
+		Bresenham(s_x, s_y, current_end_x, current_end_y);
+		//=====불꽃파티클======//
+		if (fire_level == 1)
+		{
+			for (float i = 0.0; i < 2; i += 0.1)
+			{
+				Bresenham(current_end_x, current_end_y, current_end_x + cos(i * PIE) * c_time, current_end_y + sin(i * PIE) * c_time);
+			}
+		}
+
+	}
+	glPopMatrix();
 }
